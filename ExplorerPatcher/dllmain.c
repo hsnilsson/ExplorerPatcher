@@ -10800,6 +10800,19 @@ EP_TASKBAR_FEATURES GetEPTaskbarFeatures()
     return eptf;
 }
 
+// ep_taskbar obtains the minimized width through the host's cached GlobalMetrics,
+// which can predate our GetSystemMetrics hook. Keep the correction local to the
+// reimplemented taskbar instead of changing the system-wide minimized metrics.
+typedef void (*Taskbar_GetGlobalMetrics_t)(void* pThis, int* pMetrics);
+Taskbar_GetGlobalMetrics_t Taskbar_GetGlobalMetricsFunc;
+
+void Taskbar_GetGlobalMetricsHook(void* pThis, int* pMetrics)
+{
+    Taskbar_GetGlobalMetricsFunc(pThis, pMetrics);
+    // GlobalMetrics has nine integer fields; cxMinimized is at byte offset 24.
+    pMetrics[6] = patched_GetSystemMetrics(SM_CXMINIMIZED);
+}
+
 HMODULE PrepareAlternateTaskbarImplementation(symbols_addr* symbols_PTRS, BOOL* pbTaskbarLoadSuccess)
 {
     *pbTaskbarLoadSuccess = FALSE;
@@ -10851,11 +10864,18 @@ HMODULE PrepareAlternateTaskbarImplementation(symbols_addr* symbols_PTRS, BOOL* 
         return NULL;
     }
 
-    // The reimplemented taskbar reads button widths from its own user32 import,
-    // so the explorer.exe hook alone does not fix oversized labeled buttons.
     if (IsWindows11() && (eptf & EPTF_Taskbar) != 0)
     {
-        VnPatchIAT(hMyTaskbar, "user32.dll", "GetSystemMetrics", patched_GetSystemMetrics);
+        Taskbar_GetGlobalMetricsFunc = (Taskbar_GetGlobalMetrics_t)GetProcAddress(hMyTaskbar,
+            "?GetGlobalMetrics@TrayUI@@UEAAXPEAUGlobalMetrics@@@Z");
+        if (Taskbar_GetGlobalMetricsFunc)
+        {
+            int rv = funchook_prepare(funchook, (void**)&Taskbar_GetGlobalMetricsFunc, Taskbar_GetGlobalMetricsHook);
+            if (rv != 0)
+            {
+                printf("[TB] Failed to hook GetGlobalMetrics(): 0x%08X\n", rv);
+            }
+        }
     }
 
     typedef DWORD (WINAPI *EP_Taskbar_Initialize_t)();
