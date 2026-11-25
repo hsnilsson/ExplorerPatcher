@@ -10851,6 +10851,13 @@ HMODULE PrepareAlternateTaskbarImplementation(symbols_addr* symbols_PTRS, BOOL* 
         return NULL;
     }
 
+    // The reimplemented taskbar reads button widths from its own user32 import,
+    // so the explorer.exe hook alone does not fix oversized labeled buttons.
+    if (IsWindows11() && (eptf & EPTF_Taskbar) != 0)
+    {
+        VnPatchIAT(hMyTaskbar, "user32.dll", "GetSystemMetrics", patched_GetSystemMetrics);
+    }
+
     typedef DWORD (WINAPI *EP_Taskbar_Initialize_t)();
     EP_Taskbar_Initialize_t pfnTaskbarInitialize = (EP_Taskbar_Initialize_t)GetProcAddress(hMyTaskbar, "EP_Taskbar_Initialize");
     HRESULT hrTaskbarInitialize = pfnTaskbarInitialize ? pfnTaskbarInitialize() : HRESULT_FROM_WIN32(GetLastError());
